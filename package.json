@@ -1,0 +1,18 @@
+{
+  "name": "dsh-gateway-notify",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness plugin: push to ntfy, Bark, Gotify, Server酱, Feishu, DingTalk, WeCom, Telegram or a webhook when a long agent turn ends, fails, or waits on your approval. Port of @magpie-community/gateway-notify.",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": { ".": "./src/index.js" },
+  "files": ["src", "cordis.patch.yml", "README.md", "LICENSE"],
+  "keywords": ["dsh-plugin", "deepseek-harness", "notify", "ntfy", "bark"],
+  "license": "MIT",
+  "author": "YanYunCY",
+  "repository": { "type": "git", "url": "git+https://github.com/YanYunCY/dsh-gateway-notify.git" },
+  "engines": { "node": ">=24.9.0" },
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
+  "scripts": { "test": "node --test test/*.test.js" },
+  "peerDependencies": { "@deepseek-ai/schemastery": "^3.18.5" },
+  "devDependencies": { "@deepseek-ai/schemastery": "^3.18.5" }
+}

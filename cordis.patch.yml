@@ -1,0 +1,3 @@
+- insert:
+    - id: gateway-notify
+      name: dsh-gateway-notify
