@@ -44,7 +44,7 @@ Requires Node ≥ 24.9 (the same as dsh). Tested with dsh 0.2.1-rc.5.
         secret: env:FEISHU_SECRET
 ```
 
-Put tokens, keys and webhook URLs in environment variables and reference them as `env:NAME`; then nothing secret sits in the profile.
+Put tokens, keys and webhook URLs in environment variables and reference them as `env:NAME`; then nothing secret sits in the profile. This also works inside nested values such as a generic webhook's `headers` (`authorization: env:HOOK_AUTH`). If the variable is unset or empty and the field is required, that channel is skipped (nothing is sent to it); other channels still send.
 
 | Option | Default | Meaning |
 |---|---|---|
@@ -75,6 +75,8 @@ Put tokens, keys and webhook URLs in environment variables and reference them as
 
 Add `off: true` to keep a channel in config without sending to it.
 
+Each request times out after 10 seconds. A channel that times out, refuses the connection, answers an HTTP error, or answers 200 with an error code in the body (as the Feishu, DingTalk, WeCom and Telegram bots do) counts as a failed send. The failure is swallowed: it never throws into the agent and never stops the other channels.
+
 ## Privacy
 
 By default a push carries only the project folder name, the duration, the model, and for failures the error message. Prompts and replies are not sent unless you turn on `includeText`. Each channel is one HTTPS POST to the service you configured; nothing goes anywhere else.
@@ -87,13 +89,15 @@ The magpie version sits in an API gateway and has to infer from raw requests whe
 - identifies subagents by the session's `parentSession` instead of heuristics;
 - drops the failure hold window: dsh's own retry layer has finished by the time `turn/end` reports an error;
 - drops the `agents` and `allOrigins` filters, which picked clients in a shared gateway;
-- adds the approval-waiting push and `env:NAME` secrets.
+- adds the approval-waiting push and `env:NAME` secrets;
+- drops a session's open turn and cooldown stamp on dsh's `session/disposed`, so a long-running host does not keep state for every session it has seen.
 
 ## Development
 
 ```bash
 npm install
-npm test     # state machine with a fake clock, plus the real ntfy wire format against a local HTTP server
+npm test     # node --test: state machine with a fake clock, each channel's request format against a
+             # local HTTP server (Server酱 via a stubbed fetch), failures and timeouts. No real network.
 ```
 
 ## License

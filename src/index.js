@@ -9,7 +9,7 @@
 // background-agent guessing) are replaced by these facts. Nothing here throws
 // into the agent, and nothing is awaited on its path.
 import Schema from '@deepseek-ai/schemastery'
-import { send, usable } from './channels.js'
+import { send, usable, cut } from './channels.js'
 
 export const name = 'dsh-gateway-notify'
 
@@ -72,11 +72,11 @@ export function message(kind, info, o) {
   if (info.ms != null) lines.push(`${w.took} ${duration(info.ms, w)}`)
   if (info.model) lines.push(`${w.model}: ${info.model}`)
   if (info.maxTokens) lines.push(w.truncated)
-  if (kind === 'failed' && info.error) lines.push(String(info.error).slice(0, 200))
+  if (kind === 'failed' && info.error) lines.push(cut(info.error, 200))
   if (kind === 'waiting' && info.toolName) lines.push(`${w.tool}: ${info.toolName}`)
   if (o.includeText && info.text && o.maxTextLength) {
     const flat = info.text.replace(/\s+/g, ' ').trim()
-    if (flat) lines.push('', flat.length > o.maxTextLength ? `${flat.slice(0, o.maxTextLength)}…` : flat)
+    if (flat) { const short = cut(flat, o.maxTextLength); lines.push('', short.length < flat.length ? `${short}…` : flat) }
   }
   return {
     title, body: lines.join('\n'), ok: kind === 'done',
@@ -101,13 +101,15 @@ export function createNotifier(o, io = {}) {
   const approvals = new Map() // approval id -> timer
   const sentAt = new Map()
   const pending = new Set()
+  let disposed = false
 
   function fire(sessionId, kind, info) {
-    if (channels.length === 0) return
+    if (disposed || channels.length === 0) return
     if (now() - (sentAt.get(sessionId) ?? -Infinity) < o.cooldownSeconds * 1000) return
     sentAt.set(sessionId, now())
     const m = message(kind, { ...info, session: sessionId }, o)
-    const job = Promise.all(channels.map((c) => push(c, m))).catch(() => {}).finally(() => pending.delete(job))
+    // one channel failing, even synchronously, never stops the others
+    const job = Promise.allSettled(channels.map(async (c) => push(c, m))).finally(() => pending.delete(job))
     pending.add(job)
   }
 
@@ -116,6 +118,7 @@ export function createNotifier(o, io = {}) {
   }
 
   function onEvent(session, event) {
+    if (disposed) return
     try {
       const header = session?.header ?? {}
       const id = header.id ?? session?.id
@@ -153,7 +156,8 @@ export function createNotifier(o, io = {}) {
           if (aid === undefined || approvals.has(aid)) return
           const timer = later(() => {
             approvals.delete(aid)
-            fire(`${id}#approval`, 'waiting', { cwd: header.cwd, model: modelOf(session), toolName: event.data.toolName })
+            // runs from a timer, outside onEvent's guard: a throw here would be uncaught
+            try { fire(`${id}#approval`, 'waiting', { cwd: header.cwd, model: modelOf(session), toolName: event.data.toolName }) } catch {}
           }, o.approvalDelaySeconds * 1000)
           approvals.set(aid, timer)
           break
@@ -167,16 +171,27 @@ export function createNotifier(o, io = {}) {
     } catch {}
   }
 
-  function dispose() {
-    for (const t of approvals.values()) cancel(t)
-    approvals.clear(); turns.clear()
+  // a disposed session's open turn and cooldown stamps are dropped, so a
+  // long-running host does not keep one entry per session it ever saw
+  function forget(session) {
+    try {
+      const id = session?.header?.id ?? session?.id
+      turns.delete(id); sentAt.delete(id); sentAt.delete(`${id}#approval`)
+    } catch {}
   }
 
-  return { onEvent, dispose, settled: () => Promise.all([...pending]), channels }
+  function dispose() {
+    disposed = true
+    for (const t of approvals.values()) cancel(t)
+    approvals.clear(); turns.clear(); sentAt.clear()
+  }
+
+  return { onEvent, forget, dispose, settled: () => Promise.all([...pending]), channels }
 }
 
 export function apply(ctx, config) {
   const n = createNotifier(config)
   ctx.on('session/event', (session, event) => n.onEvent(session, event))
+  ctx.on('session/disposed', (session) => n.forget(session))
   ctx.effect(() => () => n.dispose(), 'gateway-notify timers')
 }
